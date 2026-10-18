@@ -947,25 +947,26 @@ function UsageOverview({
                     >
                       <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
                       <td className="py-2.5 text-left whitespace-normal">
-                        <button
-                          type="button"
-                          onClick={() => onSelectModel(key)}
-                          className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0"
-                        >
-                          <ProviderMark provider={model.provider} className="size-3.5" />
-                          {model.model}
-                        </button>
-                        <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width:
-                                value > 0 && breakdownPeak > 0
-                                  ? `max(0.5rem, ${(value / breakdownPeak) * 100}%)`
-                                  : 0,
-                              backgroundColor: PROVIDER_PRESENTATION[model.provider].color,
-                            }}
-                          />
+                        <div className="flex min-h-7 flex-col justify-center">
+                          <button
+                            type="button"
+                            onClick={() => onSelectModel(key)}
+                            className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0"
+                          >
+                            <ProviderMark provider={model.provider} className="size-3.5" />
+                            {model.model}
+                          </button>
+                          {value > 0 && breakdownPeak > 0 ? (
+                            <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `max(0.5rem, ${(value / breakdownPeak) * 100}%)`,
+                                  backgroundColor: PROVIDER_PRESENTATION[model.provider].color,
+                                }}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       </td>
                       <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
