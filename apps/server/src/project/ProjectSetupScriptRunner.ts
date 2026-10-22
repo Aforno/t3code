@@ -400,8 +400,10 @@ export const make = Effect.gen(function* () {
         ),
       );
       const completionShell = resolveCompletionShell(shell);
-      if (completionShell === null)
+      if (completionShell === null) {
+        yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
         return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
+      }
       commandLine = wrapCommandForCompletion(
         script.command,
         completionShell,

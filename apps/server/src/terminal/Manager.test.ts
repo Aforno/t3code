@@ -1082,50 +1082,59 @@ it.layer(
     }),
   );
 
-  it.effect("rejects cmd fallback before writing an unsupported completion wrapper", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
-        env: { SystemRoot: "C:\\Windows" },
-      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
-      ptyAdapter.spawnFailures.push(
-        new Error("spawn pwsh ENOENT"),
-        new Error("spawn WindowsPowerShell ENOENT"),
-        new Error("spawn powershell ENOENT"),
-      );
-      const runner = yield* ProjectSetupScriptRunner.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(TerminalManager.TerminalManager, manager),
-            Layer.mock(ProjectService.ProjectService)({}),
-            ServerSettings.layerTest(),
+  it.effect.each([false, true])(
+    "rejects cmd fallback and closes only an idle terminal (busy: %s)",
+    (hasRunningSubprocess) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+          env: { SystemRoot: "C:\\Windows" },
+          subprocessInspector: () =>
+            Effect.succeed({
+              hasRunningSubprocess,
+              childCommand: hasRunningSubprocess ? "node" : null,
+              processIds: [],
+            }),
+        }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+        ptyAdapter.spawnFailures.push(
+          new Error("spawn pwsh ENOENT"),
+          new Error("spawn WindowsPowerShell ENOENT"),
+          new Error("spawn powershell ENOENT"),
+        );
+        const runner = yield* ProjectSetupScriptRunner.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(TerminalManager.TerminalManager, manager),
+              Layer.mock(ProjectService.ProjectService)({}),
+              ServerSettings.layerTest(),
+            ),
           ),
-        ),
-      );
-      const error = yield* runner
-        .runForThread({
-          threadId: "thread-cmd-fallback",
-          worktreePath: baseDir,
-          project: {
-            id: ProjectId.make("project-cmd-fallback"),
-            workspaceRoot: baseDir,
-            scripts: [
-              {
-                id: "setup",
-                name: "Setup",
-                command: "echo setup-ready",
-                icon: "play",
-                runOnWorktreeCreate: true,
-              },
-            ],
-          },
-          observeCompletion: {},
-        })
-        .pipe(Effect.flip);
+        );
+        const error = yield* runner
+          .runForThread({
+            threadId: "thread-cmd-fallback",
+            worktreePath: baseDir,
+            project: {
+              id: ProjectId.make("project-cmd-fallback"),
+              workspaceRoot: baseDir,
+              scripts: [
+                {
+                  id: "setup",
+                  name: "Setup",
+                  command: "echo setup-ready",
+                  icon: "play",
+                  runOnWorktreeCreate: true,
+                },
+              ],
+            },
+            observeCompletion: {},
+          })
+          .pipe(Effect.flip);
 
-      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
-      expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
-      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
-    }),
+        expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+        expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+        expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+        expect(ptyAdapter.processes[0]?.killed).toBe(!hasRunningSubprocess);
+      }),
   );
 
   it.effect("turns off fish terminal queries unless the user chose query-term", () =>
