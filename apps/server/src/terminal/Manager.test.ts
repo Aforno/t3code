@@ -806,6 +806,62 @@ it.layer(
     }),
   );
 
+  it.effect("preserves large chunked OSC 52 and DCS strings across reopen", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const outputSeen = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "done\n"
+          ? Deferred.succeed(outputSeen, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const sequences = [
+        { prefix: `\u001b]52;c;${"YWJj".repeat(16_384)}\u001b`, terminator: "\\" },
+        { prefix: `\u0090q${"?".repeat(65_536)}`, terminator: "\u009c" },
+      ];
+      const stripped = "\u001b]11;?\u0007\u0090$q m\u009c";
+      const preserved = "\u001b[31m\u009d52;c;YWJj\u009c";
+      const expected =
+        sequences.map(({ prefix, terminator }) => prefix + terminator + preserved).join("") +
+        "done\n";
+
+      // Counts reads of strings larger than one emitted chunk, so rescanning the
+      // pending prefix on every chunk shows up as quadratic work.
+      const charCodeAt = String.prototype.charCodeAt;
+      let largeStringReads = 0;
+      yield* Effect.gen(function* () {
+        // eslint-disable-next-line no-extend-native -- Count reads without retaining millions of spy call records.
+        String.prototype.charCodeAt = function (this: string, index: number) {
+          if (this.length > 4_096) largeStringReads += 1;
+          return charCodeAt.call(this, index);
+        };
+        for (const { prefix, terminator } of sequences) {
+          for (let offset = 0; offset < prefix.length; offset += 4_096) {
+            process.emitData(prefix.slice(offset, offset + 4_096));
+          }
+          process.emitData(terminator + stripped + preserved);
+        }
+        process.emitData("done\n");
+        yield* Deferred.await(outputSeen);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            // eslint-disable-next-line no-extend-native -- Restore the counting hook even when the test fails.
+            String.prototype.charCodeAt = charCodeAt;
+          }),
+        ),
+      );
+      yield* manager.close({ threadId: "thread-1" });
+
+      expect(largeStringReads).toBeLessThan(2 * expected.length);
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe(expected);
+      expect((yield* manager.open(openInput())).history.startsWith(expected)).toBe(true);
+    }),
+  );
+
   it.effect(
     "preserves chunk-split ESC sequences with intermediate bytes without leaking final bytes",
     () =>
@@ -937,10 +993,16 @@ it.layer(
           Effect.provide(layerWithHostPlatform("linux")),
         );
         ptyAdapter.spawnFailures.push(new Error("spawn fish ENOENT"));
+        const written = yield* Deferred.make<void>();
+        const terminals = TerminalManager.TerminalManager.of({
+          ...manager,
+          write: (input) =>
+            manager.write(input).pipe(Effect.tap(() => Deferred.succeed(written, undefined))),
+        });
         const runner = yield* ProjectSetupScriptRunner.make.pipe(
           Effect.provide(
             Layer.mergeAll(
-              Layer.succeed(TerminalManager.TerminalManager, manager),
+              Layer.succeed(TerminalManager.TerminalManager, terminals),
               Layer.mock(ProjectService.ProjectService)({}),
               ServerSettings.layerTest(),
               Layer.succeed(HostProcess.Platform, "linux"),
@@ -973,6 +1035,8 @@ it.layer(
           "/bin/zsh",
         ]);
         const process = ptyAdapter.processes[0]!;
+        process.emitData("\x1b[?2004h");
+        yield* Deferred.await(written);
         const command = process.writes[0]!;
         expect(command).toContain('"$?"');
         expect(command).not.toContain("$status");
