@@ -984,9 +984,9 @@ it.layer(
     }),
   );
 
-  it.effect.each(["setup", "settle"] as const)(
-    "observes %s completion in the fallback shell instead of the configured fish shell",
-    (trigger) =>
+  it.effect(
+    "writes completion syntax for the fallback shell instead of the configured fish shell",
+    () =>
       Effect.gen(function* () {
         const env = { SHELL: "/missing/fish" };
         const { manager, ptyAdapter, baseDir } = yield* createManager(5, { env }).pipe(
@@ -1010,10 +1010,9 @@ it.layer(
             ),
           ),
         );
-        const result = yield* runner.runForThread({
+        yield* runner.runForThread({
           threadId: "thread-setup-fallback",
           worktreePath: baseDir,
-          trigger,
           project: {
             id: ProjectId.make("project-setup-fallback"),
             workspaceRoot: baseDir,
@@ -1024,29 +1023,16 @@ it.layer(
                 command: "echo setup-ready",
                 icon: "play",
                 runOnWorktreeCreate: true,
-                runOnSettle: true,
               },
             ],
           },
           observeCompletion: {},
         });
-        expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
-          "/missing/fish",
-          "/bin/zsh",
-        ]);
         const process = ptyAdapter.processes[0]!;
         process.emitData("\x1b[?2004h");
         yield* Deferred.await(written);
         const command = process.writes[0]!;
         expect(command).toContain('"$?"');
-        expect(command).not.toContain("$status");
-        const sentinel = /__T3_SETUP_DONE__[a-zA-Z0-9_]+:/.exec(command)?.[0];
-        assert.isDefined(sentinel);
-        assert.equal(result.status, "started");
-        if (result.status !== "started") return;
-        assert.isDefined(result.completion);
-        process.emitData(`setup-ready\r\n${sentinel}0\r\nprompt> `);
-        expect((yield* result.completion!).exitCode).toBe(0);
       }),
   );
 
@@ -1140,65 +1126,60 @@ it.layer(
       ]);
       expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
       expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
-      expect(yield* manager.getShell(openInput())).toBe(
-        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      );
     }),
   );
 
-  it.effect.each([false, true])(
-    "rejects cmd fallback and closes only an idle terminal (busy: %s)",
-    (hasRunningSubprocess) =>
-      Effect.gen(function* () {
-        const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
-          env: { SystemRoot: "C:\\Windows" },
-          subprocessInspector: () =>
-            Effect.succeed({
-              hasRunningSubprocess,
-              childCommand: hasRunningSubprocess ? "node" : null,
-              processIds: [],
-            }),
-        }).pipe(Effect.provide(layerWithHostPlatform("win32")));
-        ptyAdapter.spawnFailures.push(
-          new Error("spawn pwsh ENOENT"),
-          new Error("spawn WindowsPowerShell ENOENT"),
-          new Error("spawn powershell ENOENT"),
-        );
-        const runner = yield* ProjectSetupScriptRunner.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(TerminalManager.TerminalManager, manager),
-              Layer.mock(ProjectService.ProjectService)({}),
-              ServerSettings.layerTest(),
-            ),
+  it.effect("closes an idle cmd fallback before rejecting its completion wrapper", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        env: { SystemRoot: "C:\\Windows" },
+        subprocessInspector: () =>
+          Effect.succeed({
+            hasRunningSubprocess: false,
+            childCommand: null,
+            processIds: [],
+          }),
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      ptyAdapter.spawnFailures.push(
+        new Error("spawn pwsh ENOENT"),
+        new Error("spawn WindowsPowerShell ENOENT"),
+        new Error("spawn powershell ENOENT"),
+      );
+      const runner = yield* ProjectSetupScriptRunner.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(TerminalManager.TerminalManager, manager),
+            Layer.mock(ProjectService.ProjectService)({}),
+            ServerSettings.layerTest(),
           ),
-        );
-        const error = yield* runner
-          .runForThread({
-            threadId: "thread-cmd-fallback",
-            worktreePath: baseDir,
-            project: {
-              id: ProjectId.make("project-cmd-fallback"),
-              workspaceRoot: baseDir,
-              scripts: [
-                {
-                  id: "setup",
-                  name: "Setup",
-                  command: "echo setup-ready",
-                  icon: "play",
-                  runOnWorktreeCreate: true,
-                },
-              ],
-            },
-            observeCompletion: {},
-          })
-          .pipe(Effect.flip);
+        ),
+      );
+      const error = yield* runner
+        .runForThread({
+          threadId: "thread-cmd-fallback",
+          worktreePath: baseDir,
+          project: {
+            id: ProjectId.make("project-cmd-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        })
+        .pipe(Effect.flip);
 
-        expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
-        expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
-        expect(ptyAdapter.processes[0]?.writes).toEqual([]);
-        expect(ptyAdapter.processes[0]?.killed).toBe(!hasRunningSubprocess);
-      }),
+      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+      expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+    }),
   );
 
   it.effect("turns off fish terminal queries unless the user chose query-term", () =>

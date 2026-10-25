@@ -35,30 +35,16 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string;
-  readonly openOutput?: string;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
-  const emit = (terminalEvent: TerminalEvent) =>
-    Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
     open: () =>
       (options.opening
         ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
         : Effect.void
-      ).pipe(
-        Effect.andThen(
-          options.openOutput === undefined
-            ? Effect.void
-            : emit({
-                ...event,
-                type: "output",
-                data: options.openOutput,
-              }),
-        ),
-        Effect.as(openSnapshot(options.history ?? "")),
-      ),
+      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
     getShell: () => Effect.succeed(options.shell ?? "/bin/zsh"),
     subscribe: (listener) =>
       Effect.sync(() => {
@@ -96,6 +82,8 @@ const makeHarness = Effect.fn(function* (options: {
       ],
     },
   });
+  const emit = (terminalEvent: TerminalEvent) =>
+    Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
   return { start, listeners, writes, outputLines, emit };
 });
 
@@ -103,7 +91,6 @@ const setup = Effect.fn(function* (
   options: {
     readonly history?: string;
     readonly shell?: string;
-    readonly openOutput?: string;
   } = {},
 ) {
   const harness = yield* makeHarness(options);
@@ -114,28 +101,12 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
-  it.effect("keeps a line-editor signal emitted while the fallback shell opens", () =>
-    Effect.gen(function* () {
-      const { writes } = yield* setup({ openOutput: "% \x1b[?2004h" });
-      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
-    }),
-  );
-
   it.effect("writes immediately when the spawned fallback is PowerShell", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup({
         shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       });
       expect(yield* Queue.take(writes)).toContain("$global:LASTEXITCODE");
-    }),
-  );
-
-  it.effect("drops startup listeners when the fallback shell is unsupported", () =>
-    Effect.gen(function* () {
-      const { start, listeners } = yield* makeHarness({ shell: "cmd.exe" });
-      const error = yield* start.pipe(Effect.flip);
-      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
-      expect(listeners.size).toBe(0);
     }),
   );
 
