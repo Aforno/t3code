@@ -440,9 +440,8 @@ export const make = Effect.gen(function* () {
       terminalId,
       onStartupPrompt: observed?.flushPartialLine ?? Effect.void,
     });
-    let commandLine = script.command;
-    const completionShell = yield* Effect.gen(function* () {
-      yield* terminalManager
+    const { completionShell, commandLine } = yield* Effect.gen(function* () {
+      const shell = yield* terminalManager
         .open({
           threadId: input.threadId,
           terminalId,
@@ -451,6 +450,7 @@ export const make = Effect.gen(function* () {
           env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
         })
         .pipe(
+          Effect.andThen(() => terminalManager.getShell({ threadId: input.threadId, terminalId })),
           Effect.mapError(
             (cause) =>
               new ProjectSetupScriptOperationError({
@@ -460,17 +460,8 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      const shell = yield* terminalManager.getShell({ threadId: input.threadId, terminalId }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectSetupScriptOperationError({
-              ...errorContext,
-              operation: "openTerminal",
-              cause,
-            }),
-        ),
-      );
       const completionShell = resolveCompletionShell(shell);
+      let commandLine = script.command;
       if (observe && completionToken) {
         if (completionShell === null) {
           yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
@@ -483,7 +474,7 @@ export const make = Effect.gen(function* () {
         );
       }
       echoedWrapperLines.push(...commandLine.split("\r").filter((line) => line.length > 0));
-      return completionShell;
+      return { completionShell, commandLine };
     }).pipe(
       Effect.onError(() =>
         Effect.sync(() => {
