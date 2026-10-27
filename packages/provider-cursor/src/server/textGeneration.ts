@@ -156,9 +156,24 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               )
             : Effect.void,
         );
-        return yield* Effect.tryPromise(() => run.wait());
-      }).pipe(Effect.scoped);
-      const promptResult = yield* request.pipe(
+        const promptResult = yield* Effect.tryPromise(() => run.wait());
+        const rawResult = promptResult.result?.trim() ?? "";
+        if (promptResult.status !== "finished" || !rawResult) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: cursorSdkResultDetail(promptResult),
+          });
+        }
+
+        return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      }).pipe(
+        Effect.scoped,
+        Effect.retry({
+          times: 1,
+          while: (cause) => isTextGenerationError(cause) && Schema.isSchemaError(cause.cause),
+        }),
+      );
+      return yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
@@ -173,16 +188,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           }),
         ),
       );
-
-      const rawResult = promptResult.result?.trim() ?? "";
-      if (promptResult.status !== "finished" || !rawResult) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: cursorSdkResultDetail(promptResult),
-        });
-      }
-
-      return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
     },
     (effect, input) => {
       const { operation } = input;
