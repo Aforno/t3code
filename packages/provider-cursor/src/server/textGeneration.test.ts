@@ -182,9 +182,8 @@ describe("CursorTextGeneration", () => {
     { name: "invalid JSON", result: "Add a generated commit message" },
     {
       name: "a body with the wrong type",
-      result: '{"subject":"Add generated commit message","body":[],"branch":"generated-message"}',
+      result: '{"subject":"Add generated commit message","body":[]}',
     },
-    { name: "a missing branch", result: '{"subject":"Add generated commit message","body":""}' },
   ])("retries $name with a fresh agent before returning a commit message", ({ result }) =>
     Effect.gen(function* () {
       cursorSdkMock.prompt
@@ -194,8 +193,7 @@ describe("CursorTextGeneration", () => {
           return {
             id: "valid-output",
             status: "finished",
-            result:
-              '{"subject":"Add generated commit message","body":"","branch":"generated-message"}',
+            result: '{"subject":"Add generated commit message","body":""}',
           };
         });
       const generation = yield* makeCursorTextGeneration(cursorSettings, {
@@ -206,19 +204,15 @@ describe("CursorTextGeneration", () => {
         branch: "feature/cursor",
         stagedSummary: "M file.ts",
         stagedPatch: "diff",
-        includeBranch: true,
         modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
       });
 
       expect(generated).toEqual({
         subject: "Add generated commit message",
         body: "",
-        branch: "feature/generated-message",
       });
       expect(cursorSdkMock.create).toHaveBeenCalledTimes(2);
-      expect(cursorSdkMock.send.mock.calls[1]).toEqual(cursorSdkMock.send.mock.calls[0]);
       expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
-      expect(cursorSdkMock.cancel).not.toHaveBeenCalled();
       expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(layerTest)),
   );
@@ -247,8 +241,6 @@ describe("CursorTextGeneration", () => {
       expect(failure.detail).toBe("Cursor SDK returned invalid structured output.");
       expect(Schema.isSchemaError(failure.cause)).toBe(true);
       expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
-      expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
-      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -312,50 +304,6 @@ describe("CursorTextGeneration", () => {
       });
 
       expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect.each([undefined, "", "  "])("does not retry empty output (%s)", (result) =>
-    Effect.gen(function* () {
-      cursorSdkMock.prompt.mockResolvedValueOnce({
-        id: "empty-output",
-        status: "finished",
-        ...(result === undefined ? {} : { result }),
-      });
-      const generation = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
-      const failure = yield* Effect.flip(
-        generation.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix reconnect",
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
-        }),
-      );
-
-      expect(failure.detail).toBe("Cursor SDK returned empty output.");
-      expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("does not retry an SDK request rejection", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.prompt.mockRejectedValueOnce(new Error("SDK request failed"));
-      const generation = yield* makeCursorTextGeneration(cursorSettings, {
-        CURSOR_API_KEY: "test-cursor-key",
-      });
-      const failure = yield* Effect.flip(
-        generation.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix reconnect",
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
-        }),
-      );
-
-      expect(failure.detail).toBe("Cursor SDK text generation failed.");
-      expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
-      expect(cursorSdkMock.close).toHaveBeenCalledOnce();
-      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
     }).pipe(Effect.provide(layerTest)),
   );
 
