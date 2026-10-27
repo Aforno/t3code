@@ -30,6 +30,7 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1004,6 +1005,9 @@ it.layer(
             Layer.mergeAll(
               Layer.succeed(TerminalManager.TerminalManager, terminals),
               Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadShell: () => Effect.succeed(null),
+              }),
               ServerSettings.layerTest(),
               Layer.succeed(HostProcess.Platform, "linux"),
               Layer.succeed(HostProcess.Environment, env),
@@ -1150,6 +1154,9 @@ it.layer(
           Layer.mergeAll(
             Layer.succeed(TerminalManager.TerminalManager, manager),
             Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () => Effect.succeed(null),
+            }),
             ServerSettings.layerTest(),
           ),
         ),
