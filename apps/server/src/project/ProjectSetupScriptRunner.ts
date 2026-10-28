@@ -473,7 +473,11 @@ export const make = Effect.gen(function* () {
           env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
         })
         .pipe(
-          Effect.andThen(() => terminalManager.getShell({ threadId: input.threadId, terminalId })),
+          Effect.andThen(() =>
+            terminalManager
+              .getShell({ threadId: input.threadId, terminalId })
+              .pipe(Effect.catchTags({ TerminalNotRunningError: () => Effect.succeed(null) })),
+          ),
           Effect.mapError(
             (cause) =>
               new ProjectSetupScriptOperationError({
@@ -483,6 +487,10 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (shell === null) {
+        yield* observed?.abandon ?? Effect.void;
+        return { completionShell: null, commandLine: null };
+      }
       const completionShell = resolveCompletionShell(shell);
       let commandLine = script.command;
       if (observe && completionToken) {
@@ -515,7 +523,7 @@ export const make = Effect.gen(function* () {
         : Effect.succeed("ready" as const)
     ).pipe(
       Effect.flatMap((shell) =>
-        shell === "exited"
+        shell === "exited" || commandLine === null
           ? Effect.void
           : terminalManager.write({
               threadId: input.threadId,
