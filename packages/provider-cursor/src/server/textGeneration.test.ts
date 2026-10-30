@@ -307,14 +307,14 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["error", "cancelled"] as const)(
-    "rejects a %s Cursor SDK run that includes valid title JSON",
+  it.effect.each(["error", "cancelled", "finished"] as const)(
+    "does not retry an unsuccessful or empty %s Cursor SDK run",
     (status) =>
       Effect.gen(function* () {
         const promptResult = {
           id: "run-cursor-partial-title-test",
           status,
-          result: '{"title":"Partial title from a failed run."}',
+          result: status === "finished" ? "   " : '{"title":"Partial title from a failed run."}',
         } satisfies RunResult;
         cursorSdkMock.prompt.mockResolvedValueOnce(promptResult);
         const generation = yield* makeCursorTextGeneration(cursorSettings, {
@@ -335,7 +335,9 @@ describe("CursorTextGeneration", () => {
         expect(failure.detail).toBe(
           status === "cancelled"
             ? "Cursor SDK request was cancelled."
-            : "Cursor SDK request finished with an error.",
+            : status === "error"
+              ? "Cursor SDK request finished with an error."
+              : "Cursor SDK returned empty output.",
         );
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
         expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();

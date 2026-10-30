@@ -2,7 +2,6 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
@@ -174,19 +173,16 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         }),
       );
       return yield* request.pipe(
-        Effect.timeoutOption(CURSOR_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new TextGenerationError({
-                  operation,
-                  detail: "Cursor SDK request timed out.",
-                }),
-              ),
-            onSome: (value) => Effect.succeed(value),
-          }),
-        ),
+        Effect.timeoutOrElse({
+          duration: CURSOR_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request timed out.",
+              }),
+            ),
+        }),
       );
     },
     (effect, input) => {
